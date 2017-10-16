@@ -1,8 +1,8 @@
 /*
-  Morse.h - Library for flashing Morse code.
-  Created by David A. Mellis, November 2, 2007.
-  Released into the public domain.
+  NooliteTX - Library for transmitting NooLite RF codes
+  Created by Andrey F. Kupreychik (c) 2017
 */
+
 #ifndef NooliteTX_h
 #define NooliteTX_h
 
