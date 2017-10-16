@@ -19,8 +19,10 @@ void send_bit(int pin, byte value) {
 }
 
 void send_sequence(int pin, int count, byte * sequence, byte shift) {
+  pinMode(pin, OUTPUT);
+
   send_bit(pin, 1);
-  
+
   for (int j = shift; j < 8; j++) {
     send_bit(pin, bitRead(sequence[0], j));
   }
@@ -88,7 +90,7 @@ uint8_t crc8_maxim(uint8_t *data, int len, uint8_t crc)
     0x74U,0x2AU,0xC8U,0x96U,0x15U,0x4BU,0xA9U,0xF7U,
     0xB6U,0xE8U,0x0AU,0x54U,0xD7U,0x89U,0x6BU,0x35U,
     };
-    
+
     while (len > 0)
     {
         crc = table[*data ^ (uint8_t)crc];
@@ -103,7 +105,7 @@ byte calc_checksum(int count, byte * sequence) {
   byte data[] = {0,0,0,0,0,0,0,0,0,0};
   byte mask  ;
   // first byte from 1 to 5 bit (0-based)
-  
+
   for (int byte_n=0; byte_n < count; ++byte_n) {
     for (int i=0; i < 8; ++i) {
       if (bitRead(sequence[byte_n], i)) {
@@ -112,13 +114,12 @@ byte calc_checksum(int count, byte * sequence) {
       }
     }
   }
-  
+
   return crc8_maxim(data, count, 0);
 }
 
 
 NooliteTX::NooliteTX(int pin, uint16_t addr) {
-  pinMode(pin, OUTPUT); 
   _pin = pin;
   _addr_lo = lowByte(addr);
   _addr_hi = highByte(addr);
@@ -159,7 +160,7 @@ void NooliteTX::send_command(byte cmd, byte * argv, byte argc) {
   payload[len++] = _addr_lo;
   payload[len++] = _addr_hi;
   payload[len++] = fmt;
-  
+
   byte checksum_val = calc_checksum(len, payload);
   payload[len++] = checksum_val;
 
