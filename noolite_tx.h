@@ -2,16 +2,13 @@
   NooliteTX - Library for transmitting NooLite RF codes
   Created by Andrey F. Kupreychik (c) 2017
 */
-
 #ifndef NooliteTX_h
 #define NooliteTX_h
-
-#include "Arduino.h"
 
 class NooliteTX
 {
   public:
-    NooliteTX(int pin, uint16_t addr);
+    NooliteTX(uint8_t pin, uint16_t addr);
     void send_command(uint8_t cmd, uint8_t * argv, uint8_t argc);
     void send_command(uint8_t cmd);
   private:

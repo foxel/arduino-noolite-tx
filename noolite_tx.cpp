@@ -5,24 +5,69 @@
 
 #include "Arduino.h"
 #include "noolite_tx.h"
+#include <avr/power.h>
 
-const unsigned int PERIOD = 500; //usec
+//usec
+#define PERIOD 500
 
-void send_bit(int pin, byte value) {
-  byte clock = 0;
-  digitalWrite(pin, clock ^ (!value));
-  delayMicroseconds(PERIOD);
-  clock = !clock;
-  digitalWrite(pin, clock ^ (!value));
-  delayMicroseconds(PERIOD);
-  //Serial.print(value);
+void __setup_timer(void);
+
+static volatile uint8_t _tx_signal = 0;
+static volatile uint8_t _tx_phase = 0;
+static volatile uint8_t _tx_ready = 0;
+static volatile uint8_t _tx_pin = 0;
+
+// this is a timer compare handler to change output pin state
+#if defined(TIMER1_OVF_vect)
+SIGNAL(TIMER1_OVF_vect)
+#elif defined(TIM1_OVF_vect)
+SIGNAL(TIM1_OVF_vect)
+#else
+  #error cannot find timer overflow vector
+#endif
+{
+  if (_tx_phase) {
+    digitalWrite(_tx_pin, _tx_signal);
+  } else {
+    digitalWrite(_tx_pin, LOW);
+  }
+  
+  switch (_tx_phase) {
+    case 2: 
+      _tx_signal = !_tx_signal;
+      break;
+    case 1:
+      _tx_ready = 1;
+      break;
+    case 0:
+      // disable timer interrupt
+      #if defined(TIMSK)
+        TIMSK &= ~(1<<TOIE1);
+      #else
+        TIMSK1 &= ~(1<<TOIE1);
+      #endif
+  }
+  _tx_phase--;
 }
 
-void send_sequence(int pin, int count, byte * sequence, byte shift) {
-  pinMode(pin, OUTPUT);
+void send_bit(uint8_t pin, uint8_t value) {
+  _tx_pin = pin;
+  _tx_signal = !value;
+  _tx_phase = 2;
+  _tx_ready = 0;
+  
+  #if defined(TIMSK)
+    TIMSK |= (1<<TOIE1);
+  #else
+    TIMSK1 |= (1<<TOIE1);
+  #endif
 
+  while (!_tx_ready);
+}
+
+void send_sequence(uint8_t pin, uint8_t count, uint8_t * sequence, uint8_t shift) {
   send_bit(pin, 1);
-
+  
   for (int j = shift; j < 8; j++) {
     send_bit(pin, bitRead(sequence[0], j));
   }
@@ -33,30 +78,23 @@ void send_sequence(int pin, int count, byte * sequence, byte shift) {
     }
   }
 
-  //Serial.println();
-
-  digitalWrite(pin, LOW);
   delayMicroseconds(PERIOD * 3);
-
 }
 
-void send_preable(int pin, int len) {
+void send_preable(uint8_t pin, uint8_t len) {
   for (int i = 0; i < len; ++i) {
     send_bit(pin, 1);
   }
 
-  //Serial.println();
-
-  digitalWrite(pin, LOW);
   delayMicroseconds(PERIOD * 3);
 }
 
 
 // Automatically generated CRC function
 // polynomial: 0x131, bit reverse algorithm
-uint8_t crc8_maxim(uint8_t *data, int len, uint8_t crc)
+uint8_t crc8_maxim(uint8_t *data, uint8_t len, uint8_t crc)
 {
-    static const uint8_t table[256] = {
+  static const uint8_t table[256] = {
     0x00U,0x5EU,0xBCU,0xE2U,0x61U,0x3FU,0xDDU,0x83U,
     0xC2U,0x9CU,0x7EU,0x20U,0xA3U,0xFDU,0x1FU,0x41U,
     0x9DU,0xC3U,0x21U,0x7FU,0xFCU,0xA2U,0x40U,0x1EU,
@@ -89,37 +127,37 @@ uint8_t crc8_maxim(uint8_t *data, int len, uint8_t crc)
     0x2BU,0x75U,0x97U,0xC9U,0x4AU,0x14U,0xF6U,0xA8U,
     0x74U,0x2AU,0xC8U,0x96U,0x15U,0x4BU,0xA9U,0xF7U,
     0xB6U,0xE8U,0x0AU,0x54U,0xD7U,0x89U,0x6BU,0x35U,
-    };
-
-    while (len > 0)
-    {
-        crc = table[*data ^ (uint8_t)crc];
-        data++;
-        len--;
-    }
-    return crc;
+  };
+    
+  while (len > 0)
+  {
+    crc = table[*data ^ (uint8_t)crc];
+    data++;
+    len--;
+  }
+  return crc;
 }
 
 
-byte calc_checksum(int count, byte * sequence) {
-  byte data[] = {0,0,0,0,0,0,0,0,0,0};
-  byte mask  ;
+uint8_t calc_checksum(uint8_t count, uint8_t * sequence) {
+  uint8_t data[] = {0,0,0,0,0,0,0,0,0,0};
+  uint8_t mask  ;
   // first byte from 1 to 5 bit (0-based)
-
-  for (int byte_n=0; byte_n < count; ++byte_n) {
-    for (int i=0; i < 8; ++i) {
+  
+  for (uint8_t byte_n=0; byte_n < count; ++byte_n) {
+    for (uint8_t i=0; i < 8; ++i) {
       if (bitRead(sequence[byte_n], i)) {
         mask = 1 << i;  
         data[byte_n] |= mask;
       }
     }
   }
-
+  
   return crc8_maxim(data, count, 0);
 }
 
 
-NooliteTX::NooliteTX(int pin, uint16_t addr) {
+NooliteTX::NooliteTX(uint8_t pin, uint16_t addr) {
   _pin = pin;
   _addr_lo = lowByte(addr);
   _addr_hi = highByte(addr);
@@ -127,11 +165,14 @@ NooliteTX::NooliteTX(int pin, uint16_t addr) {
 }
 
 
-void NooliteTX::send_command(byte cmd, byte * argv, byte argc) {
-  byte payload[] = {0,0,0,0,0,0,0,0,0,0};
-  byte len = 0;
-  byte shift = 0;
-  byte fmt = 0;
+void NooliteTX::send_command(uint8_t cmd, uint8_t * argv, uint8_t argc) {
+  pinMode(_pin, OUTPUT);
+  __setup_timer();
+
+  uint8_t payload[] = {0,0,0,0,0,0,0,0,0,0};
+  uint8_t len = 0;
+  uint8_t shift = 0;
+  uint8_t fmt = 0;
 
   if (argc == 0) {
     fmt = 0;
@@ -160,11 +201,10 @@ void NooliteTX::send_command(byte cmd, byte * argv, byte argc) {
   payload[len++] = _addr_lo;
   payload[len++] = _addr_hi;
   payload[len++] = fmt;
-
+  
   byte checksum_val = calc_checksum(len, payload);
   payload[len++] = checksum_val;
 
-  //Serial.println("send");
   send_preable(_pin, len*8);
   send_sequence(_pin, len, payload, shift);
   send_sequence(_pin, len, payload, shift);
@@ -173,7 +213,149 @@ void NooliteTX::send_command(byte cmd, byte * argv, byte argc) {
 
 }
 
-void NooliteTX::send_command(byte cmd) {
+void NooliteTX::send_command(uint8_t cmd) {
   this->send_command(cmd, {}, 0);
 }
 
+
+// preparing timer
+void __setup_timer(void) {
+  #if defined(power_timer1_enable)
+    power_timer1_enable();
+  #endif
+
+  #if defined(TCCR1) // 8-bit TIMER1 with 4 bit RF_TIMER_PRESCALER (e.g. TINYx5)
+    // Turn off Clear on Compare Match, turn off PWM A, disconnect the timer from the output pin, stop the clock
+    TCCR1 = 0;
+    // Turn off PWM A, disconnect the timer from the output pin, no Force Output Compare Match, no RF_TIMER_PRESCALER Reset
+    GTCCR &= ~((1<<PWM1B) | (1<<COM1B1) | (1<<COM1B0) | (1<<FOC1B) | (1<<FOC1A) | (1<<PSR1));
+    // Disable all Timer1 interrupts
+    TIMSK &= ~((1<<OCIE1A) | (1<<OCIE1B) | (1<<TOIE1));
+    // Clear the Timer1 interrupt flags
+    TIFR |= ((1<<OCF1A) | (1<<OCF1B) | (1<<TOV1));
+    // disadle PLL source for timer1 if available
+    #if defined(PLLCSR)
+      PLLCSR &= ~(1<<PCKE);
+    #endif
+
+    // Reset the count to zero
+    TCNT1 = 0;
+    // Set the output compare registers to zero
+    OCR1A = 0;
+    OCR1B = 0;
+    OCR1C = 0;
+    
+    // set CTC and PWM
+    TCCR1 |= (1<<CTC1) | (1<<PWM1A);
+    // set RF_TIMER_PRESCALER and counter
+    #if F_CPU <= 1000000L
+      #define RF_TIMER_PRESCALER 2
+      TCCR1 |= (1<<CS11);
+    #elif F_CPU <= 2000000L
+      #define RF_TIMER_PRESCALER 4
+      TCCR1 |= (1<<CS11) | (1<<CS10);
+    #elif F_CPU <= 4000000L
+      #define RF_TIMER_PRESCALER 8
+      TCCR1 |= (1<<CS12);
+    #elif F_CPU <= 8000000L
+      #define RF_TIMER_PRESCALER 16
+      TCCR1 |= (1<<CS12) | (1<<CS10);
+    #elif F_CPU <= 16000000L
+      #define RF_TIMER_PRESCALER 32
+      TCCR1 |= (1<<CS12) | (1<<CS11);
+    #elif F_CPU <= 32000000L
+      #define RF_TIMER_PRESCALER 64
+      TCCR1 |= (1<<CS12) | (1<<CS11) | (1<<CS10);
+    #else
+      #error "CPU frequesncy higher than 32 MHz is not expected"
+    #endif
+    
+    OCR1C = (F_CPU / RF_TIMER_PRESCALER) / (1000000L / PERIOD);
+  #elif defined(TCCR1E) // 8-10-bit timer (e.g. TINYx61
+    TCCR1A = 0;
+    TCCR1B = 0;
+    TCCR1C = 0;
+    TCCR1D = 0;
+    TCCR1E = 0;
+    // Disable all Timer1 interrupts
+    TIMSK &= ~((1<<TOIE1) | (1<<OCIE1A) | (1<<OCIE1B) | (1<<OCIE1D));
+    // Clear the Timer1 interrupt flags
+    TIFR |= ((1<<TOV1) | (1<<OCF1A) | (1<<OCF1B) | (1<<OCF1D));
+    // Reset the count to zero
+    TCNT1 = 0;
+    // Set the output compare registers to zero
+    OCR1A = 0;
+    OCR1B = 0;
+    // disadle PLL source for timer1 if available
+    #if defined(PLLCSR)
+      PLLCSR &= ~(1<<PCKE);
+    #endif
+
+    // set RF_TIMER_PRESCALER and counter
+    #if F_CPU <= 1000000L
+      #define RF_TIMER_PRESCALER 2
+      TCCR1B |= (1<<CS11);
+    #elif F_CPU <= 2000000L
+      #define RF_TIMER_PRESCALER 4
+      TCCR1B |= (1<<CS11) | (1<<CS10);
+    #elif F_CPU <= 4000000L
+      #define RF_TIMER_PRESCALER 8
+      TCCR1B |= (1<<CS12);
+    #elif F_CPU <= 8000000L
+      #define RF_TIMER_PRESCALER 16
+      TCCR1B |= (1<<CS12) | (1<<CS10);
+    #elif F_CPU <= 16000000L
+      #define RF_TIMER_PRESCALER 32
+      TCCR1B |= (1<<CS12) | (1<<CS11);
+    #elif F_CPU <= 32000000L
+      #define RF_TIMER_PRESCALER 64
+      TCCR1B |= (1<<CS12) | (1<<CS11) | (1<<CS10);
+    #else
+      #error "CPU frequesncy higher than 32 MHz is not expected"
+    #endif
+    
+    OCR1C = (F_CPU / RF_TIMER_PRESCALER) / (1000000L / PERIOD);
+  #else // 16-bit timer (default)
+    // Turn off Input Capture Noise Canceler, Input Capture Edge Select on Falling, stop the clock
+    // Disconnect the timer from the output pins, Set Waveform Generation Mode to Normal
+    TCCR1A = 0;
+    TCCR1B = 0;
+    #if defined(TIMSK)
+      // Disable all Timer1 interrupts
+      TIMSK &= ~((1<<TOIE1) | (1<<OCIE1A) | (1<<OCIE1B) | (1<<ICIE1));
+      // Clear the Timer1 interrupt flags
+      TIFR |= ((1<<TOV1) | (1<<OCF1A) | (1<<OCF1B) | (1<<ICF1));
+    #elif defined(TIMSK1)
+      // Disable all Timer1 interrupts
+      TIMSK1 &= ~((1<<TOIE1) | (1<<OCIE1A) | (1<<OCIE1B) | (1<<ICIE1));
+      // Clear the Timer1 interrupt flags
+      TIFR1 |= ((1<<TOV1) | (1<<OCF1A) | (1<<OCF1B) | (1<<ICF1));
+    #endif
+    // Reset the count to zero
+    TCNT1 = 0;
+    // Set the output compare registers to zero
+    OCR1A = 0;
+    OCR1B = 0;
+    
+    // set Fast PWM CTC mode
+    TCCR1A |= (1<<WGM11) | (1<<WGM10);
+    TCCR1B |= (1<<WGM13) | (1<<WGM12);
+    // set RF_TIMER_PRESCALER and counter
+    #if F_CPU <= 500000L
+      #define RF_TIMER_PRESCALER 1
+      TCCR1B |= (1<<CS10);
+    #elif F_CPU <= 4000000L
+      #define RF_TIMER_PRESCALER 8
+      TCCR1B |= (1<<CS11);
+    #elif F_CPU <= 32000000L
+      #define RF_TIMER_PRESCALER 64
+      TCCR1B |= (1<<CS11) | (1<<CS10);
+    #else
+      #error "CPU frequesncy higher than 32 MHz is not expected"
+    #endif
+    
+    OCR1A = (F_CPU / RF_TIMER_PRESCALER) / (1000000L / PERIOD);
+
+  #endif
+
+}
