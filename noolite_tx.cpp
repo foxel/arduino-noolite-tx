@@ -68,12 +68,12 @@ void send_bit(uint8_t pin, uint8_t value) {
 void send_sequence(uint8_t pin, uint8_t count, uint8_t * sequence, uint8_t shift) {
   send_bit(pin, 1);
   
-  for (int j = shift; j < 8; j++) {
+  for (uint8_t j = shift; j < 8; j++) {
     send_bit(pin, bitRead(sequence[0], j));
   }
 
-  for (int i = 1; i < count; ++i) {
-    for (int j = 0; j < 8; j++) {
+  for (uint8_t i = 1; i < count; ++i) {
+    for (uint8_t j = 0; j < 8; j++) {
       send_bit(pin, bitRead(sequence[i], j));
     }
   }
@@ -82,7 +82,7 @@ void send_sequence(uint8_t pin, uint8_t count, uint8_t * sequence, uint8_t shift
 }
 
 void send_preable(uint8_t pin, uint8_t len) {
-  for (int i = 0; i < len; ++i) {
+  for (uint8_t i = 0; i < len; ++i) {
     send_bit(pin, 1);
   }
 
@@ -94,7 +94,7 @@ void send_preable(uint8_t pin, uint8_t len) {
 // polynomial: 0x131, bit reverse algorithm
 uint8_t crc8_maxim(uint8_t *data, uint8_t len, uint8_t crc)
 {
-  static const uint8_t table[256] = {
+  static const uint8_t table[256] PROGMEM = {
     0x00U,0x5EU,0xBCU,0xE2U,0x61U,0x3FU,0xDDU,0x83U,
     0xC2U,0x9CU,0x7EU,0x20U,0xA3U,0xFDU,0x1FU,0x41U,
     0x9DU,0xC3U,0x21U,0x7FU,0xFCU,0xA2U,0x40U,0x1EU,
@@ -131,7 +131,7 @@ uint8_t crc8_maxim(uint8_t *data, uint8_t len, uint8_t crc)
     
   while (len > 0)
   {
-    crc = table[*data ^ (uint8_t)crc];
+    crc = pgm_read_byte(&table[*data ^ (uint8_t)crc]);
     data++;
     len--;
   }
@@ -157,12 +157,18 @@ uint8_t calc_checksum(uint8_t count, uint8_t * sequence) {
 }
 
 
-NooliteTX::NooliteTX(uint8_t pin, uint16_t addr) {
+NooliteTX::NooliteTX(uint8_t pin, uint16_t addr, uint8_t repeats) {
   _pin = pin;
   _addr_lo = lowByte(addr);
   _addr_hi = highByte(addr);
   _flip = 0;
+  _repeats = repeats;
 }
+
+NooliteTX::NooliteTX(uint8_t pin, uint16_t addr) {
+  NooliteTX(pin, addr, 3);
+}
+
 
 
 void NooliteTX::send_command(uint8_t cmd, uint8_t * argv, uint8_t argc) {
@@ -194,7 +200,7 @@ void NooliteTX::send_command(uint8_t cmd, uint8_t * argv, uint8_t argc) {
     payload[len++] = ((cmd & 0x0f) << 4) | (_flip & 1) << 3;
   }
 
-  for (int i = 0; i < argc; i++) {
+  for (uint8_t i = 0; i < argc; i++) {
     payload[len++] = argv[i];
   }
 
@@ -206,11 +212,11 @@ void NooliteTX::send_command(uint8_t cmd, uint8_t * argv, uint8_t argc) {
   payload[len++] = checksum_val;
 
   send_preable(_pin, len*8);
-  send_sequence(_pin, len, payload, shift);
-  send_sequence(_pin, len, payload, shift);
+  for (uint8_t i = 0; i < _repeats; ++i) {
+    send_sequence(_pin, len, payload, shift);
+  }
 
   _flip = !_flip;
-
 }
 
 void NooliteTX::send_command(uint8_t cmd) {

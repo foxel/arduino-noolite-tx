@@ -8,6 +8,7 @@
 class NooliteTX
 {
   public:
+    NooliteTX(uint8_t pin, uint16_t addr, uint8_t repeats);
     NooliteTX(uint8_t pin, uint16_t addr);
     void send_command(uint8_t cmd, uint8_t * argv, uint8_t argc);
     void send_command(uint8_t cmd);
@@ -16,6 +17,7 @@ class NooliteTX
     uint8_t _addr_lo;
     uint8_t _addr_hi;
     uint8_t _flip;
+    uint8_t _repeats;
 };
 
 #endif
